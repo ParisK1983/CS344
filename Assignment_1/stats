@@ -1,0 +1,256 @@
+cvbnmcm#!/bin/sh
+
+#
+#Passes the arguments into the variables.
+#
+args=$#
+arg1=$1
+fName=$2
+#######################################################################################
+#
+#The trap below catches any interupt, hang up or terminate signal
+#and removes any temporary file created, kills the script and exits
+#with the value 1.
+#
+trap "rm -f $$_tmp.txt; rm -f $$_tmp2.txt; rm -f $$_mdn.txt; kill -9 $$; exit 1" SIGINT SIGHUP SIGTERM
+#######################################################################################
+#
+#The if statement below checks the number of arguments.If there are more than 2
+#or 0 then it gives an error message and it exits with
+#the value 1.
+#
+if (($args > 0))
+then
+	if (("$args" >= "3"))
+	then
+		echo "./stats {-rows|-cols} [file]" 1>&2
+		exit 1
+	fi
+else
+	echo "./stats {-rows|-cols} [file]" 1>&2
+	exit 1
+fi
+########################################################################################
+#
+#The if statement below checks if the user gave a filename. If not then the script accepts
+#values from the standard input.
+#
+if [ !$fName ]
+then
+	fName="${2:-/dev/stdin}"
+fi
+#########################################################################################
+#
+#The if statement below checks if the given filename exists.
+#If not then it gives an error message
+#and terminates the script with value 1.
+#
+if [ ! -f $fName ]
+then
+	exit 1
+fi
+
+if [ ! -r $fName ]
+then
+	echo "./stats: cannot read $fName" 1>&2
+	exit 1
+fi
+##########################################################################################
+#
+#The if statement below checks if the file is empty and stops the script if it is.
+#
+wordNum=`wc -w < $fName`
+if (($wordNum == 0))
+then
+	exit 1
+fi
+###########################################################################################
+#
+#Below is the part of the code that calculates the stats for the rows.
+#
+#
+if [[ $arg1 = -r* ]]						#Accepts any value starting from -r 
+then
+	row=0							#Initializes the variables
+	col=0							#which are going to be used.
+	var=0							
+	cnt=0							
+	sum=0							
+	avrg=0.0						
+	echo "Average Median"
+################################################################
+	while read line									#Reads the file line by line using two loops 
+	do									          	#from which the first iterates throuth every row
+		row=`expr $row + 1`						#and the second through every column.
+		while read line								
+		do									
+			col=`expr $col + 1`					                          	#Using the head function with the -n option it extracts the rows until
+			var=`head -n $row $fName | tail -1 | cut -d'	' -f$col`	#the current row ($row) we need and then using the tail function we extract only the  
+			if [ $var ]						                                	#current row. Then by using the cut function we extract only the number so we can manipulate it as number.
+			then							                                    	#Then if that succed we store the value in a unique temp file using the process id 
+				printf "$var	\n" >> $$_tmp.txt		                  	#so in simultaneous runs do not mix with other instances of the script. Then we add the value in our sum
+				sum=`expr $sum + $var`					                      #and we update the count variable.
+				cnt=`expr $cnt + 1`					
+			fi								
+		done < $fName								
+##############################################################
+		if [ $cnt != '0' ]							                              	#After we had finished reading the file and adding the values and the count
+		then									                                        	#if we actually proceed to any action we use the sort command to sort our temp
+			var2=`sort -n $$_tmp.txt`				                          		#file and then we store the sorted file.Using the wc command we count the words in the file
+			echo "$var2" >> $$_tmp2.txt					                        	#and we store it in the var3.To find the median we divide twice that variable by 2 using
+			var3=`wc -w < $$_tmp2.txt`				                        		#the bc command to give us the float number if exist and with the expr command to give us the
+			var4=$(echo "scale=2; $var3 / 2.0" | bc)		              		#floor value.Substracting those values we end up with either 0.5 or 0 if the number 
+			var5=`expr $var3 / 2`						                            	#of the words is odd or even. After that, we add 1 on the floor variable and we store it 
+			var6=$(echo "$var4 - $var5" | bc)			                    		#in var4 and this will be the index for the median if the count is odd.
+			var4=`expr $var5 + 1`						                            	#If the count is even we extract both values wih indexes floor and floor+1, we
+											                                            	#compare them and we store the larger as median.
+			if [ $var6 = '0' ]						                               	#For the average we divide the sum variable by the count using the bc command and the expr command.
+			then								                                        	#Then we substact those values and we compare that fraction with 0.5. if the result is more than 0.5  
+				var7=`head -n $var4 $$_tmp2.txt | tail -1 | cut -d'	' -f1`	#then we round up the results to the next integer value.If is less we store the previous integer.
+				var8=`head -n $var5 $$_tmp2.txt | tail -1 | cut -d'	' -f1`	#Then we print the variables, clear the variables, remove the temp files and continue to the next line. 
+												
+				if [ $var7 -gt $var8 ]						
+				then								
+					mdn=$var7						
+				else								
+					mdn=$var8						
+				fi								
+			else									
+				mdn=`head -n $var4 $$_tmp2.txt | tail -1`			
+			fi									
+			avrg=`expr $sum / $cnt`							
+			avrg2=$(echo "scale=2; $sum / $cnt" | bc)				
+			avrgdif=$(echo "$avrg2 - $avrg" | bc)					
+			avrgdif2=$(echo "$avrgdif >= 0.5" | bc)					
+												
+			if [ $avrgdif2 = '1' ]							
+			then									
+				avrg=`expr $avrg + 1`						
+			fi									
+			echo "$avrg	$mdn"							
+												
+												
+			if [ -f $$_tmp.txt ]							
+			then									
+				rm -f $$_tmp.txt					
+			fi									
+			if [ -f $$_tmp2.txt ]							
+			then									
+				rm -f $$_tmp2.txt						
+			fi									
+												
+			cnt=0									
+			col=0									
+			sum=0									
+			var=0									
+		fi 										
+	done < $fName										
+exit 0												
+###########################################################################################
+#
+#Below is the part that calculates the stats for the columns.
+#
+#
+elif [[ $arg1 = -c* ]]						#Accepts any value starting from -c
+then
+	row=0							#Initializes the variables
+	col=0							#which are going to be used.
+	var=0							#
+	cnt=0							#
+	sum=0							#
+	avrg=0						#
+	echo "Averages:"
+################################################################
+	while read line										#REads the file line by line using two loops
+	do										          	#from which the first one iterates through every column 
+		if [ $var ]								     	#and the second through every row.
+		then										
+			col=`expr $col + 1`							
+												
+			while read line								
+			do									
+				row=`expr $row + 1`					                          	#Using the head function with the -n option it extracts the rows until
+				var=`head -n $row $fName | tail -1 | cut -d'	' -f$col`	#the current row we need is reached and then using the tail command we extract the 
+											                                        	#current row. Then by using the cut command we extract the number on the column we need from that 
+				if [ $var ]						                                	#row.
+				then								
+					echo "$var" >> $$_tmp.txt		                      		#Then if we succeed we store the value in a unique temp file, we add the value to 
+					sum=`expr $sum + $var`				                      	#the sum and we update the count variable.
+					cnt=`expr $cnt + 1`					
+				fi								
+			done < $fName								
+###############################################################
+			if [ $var ]								                                    	#After we had finished reading the file and adding the values and the count
+			then									                                        	#if we actually proceed to any action we use the sort command to sort our temp file
+				var2=`sort -n $$_tmp.txt`			                          			#and then we store the sorted file. Using the wc command we count the words in the file
+				echo "$var2" >> $$_tmp2.txt					                        	#and we store that value in the var3. To find the median we divide twice that variable
+				var3=`wc -w < $$_tmp2.txt`					                        	#by 2 using the bc command to give us the float number if ecists and with the expr command to 
+				var4=$(echo "scale=2; $cnt / 2.0" | bc)			              		#give us the floor value. Substracting those values we end up with either 0.5 or 0 if the
+				var5=`expr $cnt / 2`						                            	#number of the words is odd or even. After that, we add 1 on the floor value and we store it in var4
+				var6=$(echo "$var4 - $var5" | bc)		                    			#and this will be the index of the median if the number the values is odd.
+				var4=`expr $var5 + 1`					                            		#If the number of the values is even, then we extract the values in both indexes, floor and floor+1
+													                                            #we compare them and we store as median, in a temp file, the larger.
+				if [ $var6 = '0' ]						                              	#For the average we divide the sum variable by the count using the bc command and the expr command.
+				then								                                        	#Then we substract those values and we compare that fraction with 0,5. If the result is more than 0,5
+					var7=`head -n $var4 $$_tmp2.txt | tail -1 | cut -d'	' -f1`	#then we round up the results to the next integer value. If is less we store the previous integer.
+					var8=`head -n $var5 $$_tmp2.txt | tail -1 | cut -d'	' -f1`	#Then we print the averages, clear the variables, remove the temp files and continue to the next line.
+					if [ $var7 -gt $var8 ]						                          #After we parse all the file we print the medians and remove the median's temp file.
+					then								
+						mdn=$var7						
+					else								
+						mdn=$var8						
+					fi								
+			else										
+				mdn=`head -n $var4 $$_tmp2.txt | tail -1`				
+			fi										
+			printf "$mdn	" >> $$_mdn.txt							
+													
+			if [ -f $$_tmp.txt ]								
+			then										
+				rm -f $$_tmp.txt							
+			fi										
+			if [ -f $$_tmp2.txt ]								
+			then										
+				rm -f $$_tmp2.txt							
+			fi										
+													
+													
+		fi											
+													
+		if [ $var ]										
+		then											
+			avrg=`expr $sum / $cnt`								
+			avrg2=$(echo "scale=2; $sum / $cnt" | bc)					
+			avrgdif=$(echo "$avrg2 - $avrg" | bc)						
+			avrgdif2=$(echo "$avrgdif >= 0.5" | bc)						
+			if [ $avrgdif2 = '1' ]								
+			then										
+				avrg=`expr $avrg + 1`							
+			fi										
+			printf "$avrg	"								
+			cnt=0										
+			row=0										
+			sum=0										
+			var=0										
+		fi											
+													
+	fi												
+	done < $fName											
+	printf "\nMedians:\n"										
+	read mdn < $$_mdn.txt										
+	printf "$mdn	\n"										
+													
+	if [ -f $$_mdn.txt ]										
+	then												
+		rm -f $$_mdn.txt									
+	fi												
+exit 0													
+###########################################################################################
+#
+#If the script receive any other option except -r or -c 
+#it gives an error message and exits with number 1.
+#
+else
+	echo "./stats {-rows|-cols} [file]" 1>&2
+	exit 1
+fi
